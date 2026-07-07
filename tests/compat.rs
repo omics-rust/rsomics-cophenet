@@ -76,6 +76,41 @@ fn golden_square_dist_matches_condensed_dist() {
     assert_eq!(stderr_c, stderr_s);
 }
 
+fn run_status(args: &[&str]) -> (bool, String) {
+    let out = Command::new(bin())
+        .args(args)
+        .output()
+        .expect("run rsomics-cophenet");
+    (out.status.success(), String::from_utf8(out.stderr).unwrap())
+}
+
+/// Each of these linkage matrices is rejected by scipy.cluster.hierarchy.cophenet
+/// (`is_valid_linkage`); ours must fail loud (non-zero, no panic), never index
+/// out of bounds. The out-of-range child was the original panic report.
+#[test]
+fn invalid_linkage_fails_loud() {
+    let dir = std::env::temp_dir().join("rsomics-cophenet-invalid");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let cases: &[(&str, &str)] = &[
+        ("out_of_range_child", "0\t9\t1.0\t2\n3\t2\t2.0\t3\n"),
+        ("negative_height", "0\t1\t-1.0\t2\n2\t3\t2.0\t3\n"),
+        ("reused_cluster", "0\t1\t1.0\t2\n0\t3\t2.0\t3\n"),
+        ("before_formed", "0\t20\t1.0\t2\n2\t3\t2.0\t3\n"),
+    ];
+
+    for (name, body) in cases {
+        let p = dir.join(format!("{name}.tsv"));
+        std::fs::write(&p, body).unwrap();
+        let (ok, stderr) = run_status(&[p.to_str().unwrap()]);
+        assert!(!ok, "{name}: expected non-zero exit, got success");
+        assert!(
+            !stderr.contains("panicked"),
+            "{name}: binary panicked: {stderr}"
+        );
+    }
+}
+
 fn scipy_python() -> Option<String> {
     if let Ok(p) = std::env::var("RSOMICS_SCIPY") {
         return Some(p);

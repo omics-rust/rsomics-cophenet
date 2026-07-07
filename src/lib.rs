@@ -41,7 +41,49 @@ pub fn read_linkage(path: &Path) -> Result<Vec<Merge>> {
     if merges.is_empty() {
         return Err(RsomicsError::InvalidInput("empty linkage matrix".into()));
     }
+    validate_linkage(&merges)?;
     Ok(merges)
+}
+
+/// Reject linkage matrices scipy's `is_valid_linkage` rejects, in scipy's order.
+/// Every branch here would otherwise index out of bounds or silently emit a
+/// wrong cophenetic vector in `cophenetic_distances`. Child ids are already
+/// non-negative integers (`parse_id`), so only the height, count, ordering and
+/// uniqueness invariants remain to enforce.
+pub fn validate_linkage(merges: &[Merge]) -> Result<()> {
+    let num_obs = merges.len() + 1;
+
+    for m in merges {
+        if m.height < 0.0 {
+            return Err(RsomicsError::InvalidInput(
+                "linkage contains negative distances".into(),
+            ));
+        }
+        if m.size > num_obs {
+            return Err(RsomicsError::InvalidInput(
+                "linkage contains excessive observations in a cluster".into(),
+            ));
+        }
+    }
+
+    for (i, m) in merges.iter().enumerate() {
+        if m.left >= num_obs + i || m.right >= num_obs + i {
+            return Err(RsomicsError::InvalidInput(
+                "linkage uses non-singleton cluster before it is formed".into(),
+            ));
+        }
+    }
+
+    let mut seen = std::collections::HashSet::with_capacity(2 * merges.len());
+    for m in merges {
+        if !seen.insert(m.left) || !seen.insert(m.right) {
+            return Err(RsomicsError::InvalidInput(
+                "linkage uses the same cluster more than once".into(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_id(s: &str) -> Result<usize> {
